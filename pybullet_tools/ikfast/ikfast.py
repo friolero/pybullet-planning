@@ -146,6 +146,13 @@ def ikfast_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target,
     difference_fn = get_difference_fn(robot, ik_joints)
     current_conf = get_joint_positions(robot, ik_joints)
     current_positions = get_joint_positions(robot, free_joints)
+    collision_fn = kwargs.get("collision_fn", None)
+    collision_verbose = kwargs.get("verbose", False)
+    try:
+        kwargs.pop('collision_fn')
+        kwargs.pop('verbose')
+    except:
+        pass
 
     # TODO: handle circular joints
     # TODO: use norm=INF to limit the search for free values
@@ -161,11 +168,22 @@ def ikfast_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target,
         if max_time < elapsed_time(start_time):
             break
         for conf in randomize(compute_inverse_kinematics(ikfast.get_ik, base_from_ee, free_positions)):
+
             #solution(robot, ik_joints, conf, tool_link, world_from_target)
             difference = difference_fn(current_conf, conf)
             if not violates_limits(robot, ik_joints, conf) and (get_length(difference, norm=norm) <= max_distance):
-                #set_joint_positions(robot, ik_joints, conf)
-                yield conf
+                if collision_fn:
+                    if collision_verbose:
+                        start_time = time.time()
+                        collision_fn(conf, time_profile=collision_verbose, **kwargs)
+                        end_time = time.time()
+                        print(f'[Collision]: single configuration takes {end_time-start_time}')
+                        collision_verbose = False
+                    if not collision_fn(conf, **kwargs):
+                        #set_joint_positions(robot, ik_joints, conf)
+                        yield conf
+                else:
+                    yield conf
 
 
 def closest_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target,
@@ -173,7 +191,7 @@ def closest_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target,
     start_time = time.time()
     ik_joints = get_ik_joints(robot, ikfast_info, tool_link)
     current_conf = get_joint_positions(robot, ik_joints)
-    generator = ikfast_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target, norm=norm, **kwargs)
+    generator = ikfast_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target, norm=norm, verbose=verbose, **kwargs)
     if max_candidates < INF:
         generator = islice(generator, max_candidates)
     solutions = list(generator)
@@ -182,7 +200,7 @@ def closest_inverse_kinematics(robot, ikfast_info, tool_link, world_from_target,
     solutions = sorted(solutions, key=lambda q: get_length(difference_fn(q, current_conf), norm=norm))
     if verbose:
         min_distance = min([INF] + [get_length(difference_fn(q, current_conf), norm=norm) for q in solutions])
-        print('Identified {} IK solutions with minimum distance of {:.3f} in {:.3f} seconds'.format(
+        print('[IKFast]: Identified {} IK solutions with minimum distance of {:.3f} in {:.3f} seconds'.format(
             len(solutions), min_distance, elapsed_time(start_time)))
     return iter(solutions)
 
